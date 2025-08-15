@@ -1,46 +1,84 @@
+# -*- coding: utf-8 -*-
+import math
 import os
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
-# Mac の日本語フォント設定
+np.random.seed(42)
+import matplotlib
+
 matplotlib.rcParams["font.family"] = "Hiragino Sans"
 
-# 再現性のため乱数固定
-np.random.seed(42)
+
+def ci95_to_sd(ci_low, ci_high, n):
+    z = 1.96
+    return (float(ci_high) - float(ci_low)) / (2 * z) * math.sqrt(n)
 
 
-def monte_carlo_sim(mu, sigma, n_samples=100):
-    return np.random.normal(mu, sigma, n_samples)
+def se_to_sd(se, n):
+    return float(se) * math.sqrt(n)
 
 
-# データ例（論文の値に差し替え可）
-low_iq_mu, low_iq_sigma = 5, 1.0
-high_iq_mu, high_iq_sigma = 6, 2.5
-low_iq_samples = monte_carlo_sim(low_iq_mu, low_iq_sigma)
-high_iq_samples = monte_carlo_sim(high_iq_mu, high_iq_sigma)
+def resolve_sd(row):
+    stype = str(row["spread_type"]).strip().lower()
+    if stype == "sd":
+        return float(row["spread_value"])
+    elif stype == "se":
+        return se_to_sd(row["spread_value"], int(row["n"]))
+    elif stype == "ci95":
+        return ci95_to_sd(row["ci95_low"], row["ci95_high"], int(row["n"]))
+    else:
+        raise ValueError("spread_type は sd / se / ci95 のいずれかにしてください")
 
-# グラフ描画
-plt.figure(figsize=(10, 6))
-plt.hist(
-    low_iq_samples, bins=20, alpha=0.6, label="低IQ群（予測容易）", color="skyblue"
-)
-plt.hist(
-    high_iq_samples, bins=20, alpha=0.6, label="高IQ群（予測困難）", color="salmon"
-)
-plt.title("モンテカルロ法によるEEGパワー分布の模擬")
-plt.xlabel("EEGパワーの値（任意単位）")
-plt.ylabel("出現頻度")
-plt.legend()
 
-# 保存先フォルダとファイル名
-output_dir = "results"
-os.makedirs(output_dir, exist_ok=True)
-output_path = os.path.join(output_dir, "montecarlo_eeg.png")
-plt.savefig(output_path, dpi=300, bbox_inches="tight")
+def monte_carlo(mu, sd, n_samples):
+    return np.random.normal(loc=mu, scale=sd, size=n_samples)
 
-# 表示
-plt.show()
 
-print(f"グラフを保存しました: {output_path}")
+def run(
+    params_csv, outdir="results", band_filter=None, samples_per_group=None, bins=20
+):
+    os.makedirs(outdir, exist_ok=True)
+    df = pd.read_csv(params_csv)
+    if band_filter is not None:
+        df = df[df["band"] == band_filter]
+    df = df.copy()
+    df["sd_resolved"] = df.apply(resolve_sd, axis=1)
+    if samples_per_group is None:
+        df["n_samples"] = df["n"].astype(int)
+    else:
+        df["n_samples"] = int(samples_per_group)
+    sim_data = {}
+    for _, row in df.iterrows():
+        label = f"{row['group']} (band={row['band']})"
+        sim_data[label] = monte_carlo(
+            row["mean"], row["sd_resolved"], int(row["n_samples"])
+        )
+    plt.figure(figsize=(10, 6))
+    for label, samples in sim_data.items():
+        plt.hist(samples, bins=bins, alpha=0.6, label=label)
+    title = "EEGパラメータ（PubMed要約統計）からのモンテカルロ分布"
+    if band_filter:
+        title += f" / band={band_filter}"
+    plt.title(title)
+    plt.xlabel("EEGパワー（論文の単位に合わせる）")
+    plt.ylabel("出現頻度")
+    plt.legend()
+    out_png = os.path.join(outdir, "eeg_montecarlo_from_pubmed.png")
+    plt.savefig(out_png, dpi=300, bbox_inches="tight")
+    plt.close()
+    rows = []
+    for label, samples in sim_data.items():
+        for v in samples:
+            rows.append({"group": label, "value": v})
+    out_csv = os.path.join(outdir, "eeg_montecarlo_samples.csv")
+    pd.DataFrame(rows).to_csv(out_csv, index=False)
+    return out_png, out_csv
+
+
+if __name__ == "__main__":
+    png, csv = run("eeg_params_template.csv")
+    print("図を保存しました:", png)
+    print("サンプルCSVを保存しました:", csv)
