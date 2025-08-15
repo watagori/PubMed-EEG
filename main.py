@@ -1,3 +1,5 @@
+import os
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,4 +33,14 @@ plt.title("モンテカルロ法によるEEGパワー分布の模擬")
 plt.xlabel("EEGパワーの値（任意単位）")
 plt.ylabel("出現頻度")
 plt.legend()
+
+# 保存先フォルダとファイル名
+output_dir = "results"
+os.makedirs(output_dir, exist_ok=True)
+output_path = os.path.join(output_dir, "montecarlo_eeg.png")
+plt.savefig(output_path, dpi=300, bbox_inches="tight")
+
+# 表示
 plt.show()
+
+print(f"グラフを保存しました: {output_path}")
